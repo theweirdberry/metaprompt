@@ -14,7 +14,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" {/* 필요 시 className 제거하고 next-themes 도입 가능 */}
+    <html lang="en">
       <body className="bg-background text-foreground min-h-screen antialiased font-sans transition-colors duration-300">
         {children}
       </body>
