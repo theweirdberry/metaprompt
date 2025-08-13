@@ -1,100 +1,57 @@
 "use client"
 
-const STORAGE_KEY = "ai-prompt-improver-secure-config"
-const SALT_KEY = "ai-prompt-improver-salt" // salt 저장 (선택)
-
-const encoder = new TextEncoder()
-const decoder = new TextDecoder()
-
-// 고정된 사용자 키 대신 password 기반 KDF 사용
-const getKeyFromPassword = async (password: string, salt: Uint8Array) => {
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits", "deriveKey"]
-  )
-
-  return crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt,
-      iterations: 100000,
-      hash: "SHA-256",
-    },
-    keyMaterial,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  )
-}
-
+// 간단한 XOR + Base64 인코딩 기반 암호화 유틸리티
 class SecureStorage {
-  static password = "user-provided-password-or-static-key" // 보안을 위해 앱 외부에서 주입 권장
+  private static readonly STORAGE_KEY = "ai-prompt-improver-secure-config"
+  private static readonly ENCRYPTION_KEY = "ai-prompt-improver-2024"
 
-  static async encrypt(text: string): Promise<string> {
-    const salt = crypto.getRandomValues(new Uint8Array(16))
-    const iv = crypto.getRandomValues(new Uint8Array(12))
-    const key = await getKeyFromPassword(this.password, salt)
-
-    const encrypted = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      key,
-      encoder.encode(text)
-    )
-
-    const result = new Uint8Array(salt.length + iv.length + encrypted.byteLength)
-    result.set(salt, 0)
-    result.set(iv, salt.length)
-    result.set(new Uint8Array(encrypted), salt.length + iv.length)
-
-    return btoa(String.fromCharCode(...result))
+  private static encrypt(text: string): string {
+    const key = this.ENCRYPTION_KEY
+    let result = ""
+    for (let i = 0; i < text.length; i++) {
+      result += String.fromCharCode(text.charCodeAt(i) ^ key.charCodeAt(i % key.length))
+    }
+    return btoa(result) // Base64 인코딩
   }
 
-  static async decrypt(encryptedText: string): Promise<string> {
+  private static decrypt(encryptedText: string): string {
     try {
-      const data = Uint8Array.from(atob(encryptedText), (c) => c.charCodeAt(0))
-      const salt = data.slice(0, 16)
-      const iv = data.slice(16, 28)
-      const encrypted = data.slice(28)
-      const key = await getKeyFromPassword(this.password, salt)
-
-      const decrypted = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv },
-        key,
-        encrypted
-      )
-
-      return decoder.decode(decrypted)
+      const text = atob(encryptedText) // Base64 디코딩
+      const key = this.ENCRYPTION_KEY
+      let result = ""
+      for (let i = 0; i < text.length; i++) {
+        result += String.fromCharCode(text.charCodeAt(i) ^ key.charCodeAt(i % key.length))
+      }
+      return result
     } catch {
       return ""
     }
   }
 
-  static async saveApiConfig(config: any) {
+  static saveApiConfig(config: any): void {
     try {
-      const encrypted = await this.encrypt(JSON.stringify(config))
-      localStorage.setItem(STORAGE_KEY, encrypted)
+      const encrypted = this.encrypt(JSON.stringify(config))
+      localStorage.setItem(this.STORAGE_KEY, encrypted)
     } catch (error) {
-      console.error("Failed to encrypt and save API config:", error)
+      console.error("Failed to save API config:", error)
     }
   }
 
-  static async loadApiConfig(): Promise<any | null> {
+  static loadApiConfig(): any | null {
     try {
-      const encrypted = localStorage.getItem(STORAGE_KEY)
+      const encrypted = localStorage.getItem(this.STORAGE_KEY)
       if (!encrypted) return null
-      const decrypted = await this.decrypt(encrypted)
+
+      const decrypted = this.decrypt(encrypted)
       return decrypted ? JSON.parse(decrypted) : null
     } catch (error) {
-      console.error("Failed to decrypt and load API config:", error)
+      console.error("Failed to load API config:", error)
       return null
     }
   }
 
   static clearApiConfig(): void {
-    localStorage.removeItem(STORAGE_KEY)
+    localStorage.removeItem(this.STORAGE_KEY)
   }
 
   static enableAutoCleanup(): void {
@@ -106,7 +63,12 @@ class SecureStorage {
   static maskApiKey(apiKey: string): string {
     if (!apiKey) return ""
     if (apiKey.length <= 8) return "*".repeat(apiKey.length)
-    return `${apiKey.substring(0, 4)}${"*".repeat(apiKey.length - 8)}${apiKey.slice(-4)}`
+
+    const start = apiKey.substring(0, 4)
+    const end = apiKey.substring(apiKey.length - 4)
+    const middle = "*".repeat(apiKey.length - 8)
+
+    return `${start}${middle}${end}`
   }
 
   static validateApiKeyFormat(provider: string, apiKey: string): boolean {
